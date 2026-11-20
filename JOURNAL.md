@@ -44,6 +44,7 @@
 - [ ] Recommandé : faire critiquer le travail par un LLM
 
 **Partie 1 (EDA et exploration non supervisée) : terminée (étapes 1 à 8).**
+**Partie 2 (modèles de base et d'ensemble) : en cours (étapes 9 à 13).**
 
 ---
 
@@ -173,6 +174,19 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
   - **Cluster 3 — peu ou pas rentables** : **25 % IG**, note médiane BB-.
 - **Lecture** : les clusters capturent des **modèles économiques** plus que le risque. Clusters 1 et 2 : même part d'IG, ratios très différents → **un même ratio n'a pas le même sens selon le modèle économique**.
 
+### Partie 2 — Découpage et data leakage chiffré (étape 9)
+- **Split train / test par entreprise** : 6 241 lignes / 538 entreprises (train) et **1 564 lignes / 148 entreprises (test)**. 0 entreprise et 0 bilan en commun. Part de SG : 34,6 % / 34,8 %. Agences et années réparties de la même façon.
+- **CV imbriquée** : 5 plis externes × 3 plis internes, par entreprise. Plis externes : ~1 250 lignes et ~100-115 entreprises en validation, part de SG stable (34,5-34,7 %).
+- **Démonstration du leakage** (CV à 5 plis sur le train, modèles non réglés) :
+
+| | ROC-AUC aléatoire | ROC-AUC par entreprise | Rappel SG aléatoire | Rappel SG par entreprise |
+|---|---|---|---|---|
+| Random Forest | 0,977 | 0,826 | 87 % | 65 % |
+| KNN (k = 5) | 0,946 | 0,745 | 80 % | 57 % |
+
+- → Un découpage aléatoire **surestime les performances de 15 à 30 points**. Le KNN est le plus touché (son plus proche voisin est souvent son propre jumeau). **Argument central pour la soutenance.**
+- Niveau de référence : une Random Forest sans réglage atteint **0,83 de ROC-AUC** en validation honnête.
+
 ## 2. Décisions prises
 
 *Chaque décision : constat chiffré, alternatives envisagées, raison du choix.*
@@ -239,6 +253,21 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - Tester des variables **relatives au secteur** (ratio − médiane du secteur, calculée sur le train).
 - Tester l'**appartenance à un cluster** ou la distance aux centres (KMeans ajusté sur le train) comme variable supplémentaire.
 
+### D8 — Classe positive = Speculative Grade ✅ (étape 9)
+- Cible codée **SG = 1**, IG = 0 (inverse de `Binary Rating`).
+- **Pourquoi** : la classe positive est celle qu'on veut détecter. Rappel, précision, F1 et PR-AUC de scikit-learn portent ainsi directement sur les entreprises risquées.
+
+### D9 — Jeu de test : 20 % des entreprises, figé et sous clé ✅ (étape 9)
+- `StratifiedGroupKFold(5)`, premier pli = test ; graine fixée (`SEED = 42`).
+- **Utilisé une seule fois**, à la fin de la partie 2. Toute sélection (modèles, hyperparamètres, transformations) se fait sur le train.
+- **Alternative écartée** : choisir les modèles en regardant le test → le test ne serait plus « jamais vu » (sur-apprentissage du test).
+
+### D10 — Validation croisée imbriquée 5 × 3, mêmes plis pour tous les modèles ✅ (étape 9)
+- **Boucle interne (3 plis)** : choix des hyperparamètres, en optimisant la **ROC-AUC**. **Boucle externe (5 plis)** : estimation de la performance.
+- Plis calculés **une seule fois** et réutilisés pour tous les modèles (exigence du sujet) ; par entreprise à tous les niveaux.
+- **Pourquoi imbriquée** : utiliser la même CV pour régler et pour évaluer donnerait un score optimiste (on retiendrait la configuration qui a eu de la chance sur ces plis).
+- **Pourquoi la ROC-AUC pour régler** : indépendante du seuil, elle juge la qualité du classement par niveau de risque ; les autres métriques sont rapportées pour tous les modèles.
+
 ### Table « bilans » pour les analyses non supervisées (étape 3)
 - Une ligne par bilan distinct, label majoritaire (ex aequo → SG, par prudence).
 - Utilisée pour l'information mutuelle, la PCA et le clustering, que les doublons fausseraient (un bilan noté 10 fois pèserait 10 fois plus).
@@ -282,6 +311,14 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - C'est quoi la silhouette, l'ARI, la NMI ?
 - Pourquoi le clustering ne retrouve-t-il pas IG / SG ? Qu'en avez-vous tiré ?
 
+**Partie 2**
+- Comment avez-vous découpé train et test ? Pourquoi 20 % ? Comment avez-vous vérifié qu'il n'y a pas de fuite ?
+- De combien le data leakage aurait-il faussé vos résultats ? (15 à 30 points ; démonstration section 11.5)
+- Pourquoi le KNN est-il plus sensible au leakage que la Random Forest ?
+- C'est quoi une validation croisée imbriquée ? Pourquoi deux boucles ?
+- Pourquoi SG comme classe positive ?
+- Pourquoi optimiser la ROC-AUC plutôt que l'accuracy ou le F1 ?
+
 ---
 
 ## 4. Historique
@@ -294,3 +331,4 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Étape 6** — Corrélations (Spearman), information mutuelle (piège des doublons), variables catégorielles (V de Cramér, piège du SIC). Décision D5 (sélection et encodage). Zoom CIK / SIC (identifiant déguisé).
 - **Étape 7** — PCA (sens économique des axes, 8 composantes pour 90 %), t-SNE, anomalies (Isolation Forest). Décision D6 (PCA en pipeline, anomalies gardées).
 - **Étape 8** — Clustering (KMeans, GMM ; silhouette, BIC, ARI, NMI, pureté), profils des 4 clusters, conclusions de l'exploration (D1 à D6 récapitulées). Décision D7. **Partie 1 terminée.**
+- **Étape 9** — Partie 2, préparation : variables et cible (SG = 1), split train / test par entreprise, CV imbriquée 5 × 3, métriques communes, démonstration chiffrée du data leakage. Décisions D8, D9, D10.
