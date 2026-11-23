@@ -29,14 +29,14 @@
 ### Contraintes imposées par le sujet (à cocher au fil du projet)
 
 - [ ] Feature engineering (nouvelles variables à partir des existantes)
-- [ ] Nested CV, même nombre de folds pour tous les modèles
+- [x] Nested CV, même nombre de folds pour tous les modèles (5 × 3, mêmes plis — section 11.3)
 - [ ] Learning curves
 - [ ] Mêmes métriques pour tous les modèles, comparées sur les mêmes graphiques
 - [ ] Évaluation finale sur un test set jamais vu (overfitting vs généralisation)
 - [ ] Sur/sous-échantillonnage **uniquement sur le train** (après le split)
-- [ ] Pas de modèle linéaire/polynomial non régularisé
-- [ ] Pas d'arbre de décision seul
-- [ ] Tester des versions polynomiales des modèles linéaires
+- [x] Pas de modèle linéaire/polynomial non régularisé
+- [x] Pas d'arbre de décision seul
+- [x] Tester des versions polynomiales des modèles linéaires
 - [ ] Si on part d'un sous-échantillon du train, réentraîner ensuite sur tout le train
 - [ ] Ensembles avancés (boosting, stacking…)
 - [ ] Tuning sur plusieurs hyperparamètres significatifs
@@ -175,17 +175,40 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Lecture** : les clusters capturent des **modèles économiques** plus que le risque. Clusters 1 et 2 : même part d'IG, ratios très différents → **un même ratio n'a pas le même sens selon le modèle économique**.
 
 ### Partie 2 — Découpage et data leakage chiffré (étape 9)
-- **Split train / test par entreprise** : 6 241 lignes / 538 entreprises (train) et **1 564 lignes / 148 entreprises (test)**. 0 entreprise et 0 bilan en commun. Part de SG : 34,6 % / 34,8 %. Agences et années réparties de la même façon.
+- **Fuite résiduelle découverte et corrigée** : 34 jeux de 16 ratios identiques apparaissent sous **plusieurs CIK** (178 lignes, 31 entreprises). Deux cas : même groupe sous deux identifiants (FMC Technologies, Kronos, Southwest Gas…) et **erreurs du dataset** (AAR / Air Products, EMCOR / Edison Mission, Apple / PartnerRe : bilans identiques pour des entreprises sans rapport, noms souvent voisins alphabétiquement → erreur de fusion probable).
+  - Correction : **groupes étendus** = CIK reliés par un bilan identique (union-find) → 686 CIK → **670 groupes**. Lignes conservées (on ne sait pas quelle entreprise porte les bons chiffres ; 2,3 % des données).
+- **Split train / test par groupe** : 6 250 lignes / 560 entreprises (train) et **1 555 lignes / 126 entreprises (test)**. 0 entreprise et 0 jeu de ratios en commun. Part de SG : 34,7 % / 34,6 %. Agences et années réparties de la même façon.
 - **CV imbriquée** : 5 plis externes × 3 plis internes, par entreprise. Plis externes : ~1 250 lignes et ~100-115 entreprises en validation, part de SG stable (34,5-34,7 %).
 - **Démonstration du leakage** (CV à 5 plis sur le train, modèles non réglés) :
 
 | | ROC-AUC aléatoire | ROC-AUC par entreprise | Rappel SG aléatoire | Rappel SG par entreprise |
 |---|---|---|---|---|
-| Random Forest | 0,977 | 0,826 | 87 % | 65 % |
-| KNN (k = 5) | 0,946 | 0,745 | 80 % | 57 % |
+| Random Forest | 0,980 | 0,843 | 89 % | 67 % |
+| KNN (k = 5) | 0,947 | 0,756 | 79 % | 56 % |
 
-- → Un découpage aléatoire **surestime les performances de 15 à 30 points**. Le KNN est le plus touché (son plus proche voisin est souvent son propre jumeau). **Argument central pour la soutenance.**
-- Niveau de référence : une Random Forest sans réglage atteint **0,83 de ROC-AUC** en validation honnête.
+- → Un découpage aléatoire **surestime les performances de 14 à 28 points**. Le KNN est le plus touché (son plus proche voisin est souvent son propre jumeau). **Argument central pour la soutenance.**
+- Niveau de référence : une Random Forest sans réglage atteint **0,84 de ROC-AUC** en validation honnête (variation de ± 0,02 selon le découpage).
+- **Essai rapide (hors notebook)** : régression logistique, Random Forest et gradient boosting plafonnent tous vers **0,82-0,83** de ROC-AUC sans feature engineering, et le réglage des hyperparamètres ne fait gagner que quelques millièmes. Une régression logistique sur les seuls ratios atteint déjà 0,816 → le signal (rentabilité + endettement) est fort et simple. **Les gains viendront plutôt des variables (feature engineering) que du réglage.**
+
+### Partie 2 — Modèles de base (étape 10, CV imbriquée 5 × 3, ROC-AUC optimisée)
+
+| Modèle | ROC-AUC | PR-AUC | Rappel SG | Précision SG | Écart train − val |
+|---|---|---|---|---|---|
+| Dummy (prior) | 0,500 | 0,347 | 0 % | — | — |
+| Régression logistique (L1/L2) | 0,825 ± 0,028 | 0,745 | 60 % | 76 % | +0,04 |
+| Rég. log. polynomiale (degré 2) | 0,829 ± 0,023 | 0,764 | 60 % | 78 % | +0,07 |
+| **SVM (RBF)** | **0,848 ± 0,036** | **0,780** | 59 % | 77 % | +0,05 |
+| KNN | 0,831 ± 0,032 | 0,745 | 47 % | 80 % | +0,15 (non interprétable) |
+
+- **Modèles très proches** : écarts (≤ 0,02) du même ordre que la variation entre plis (± 0,02-0,04) → **le choix du modèle compte peu**, le signal est déjà capté par un modèle linéaire.
+- **SVM légèrement devant** (frontière courbe → non-linéarités : fonds propres négatifs, effets sectoriels).
+- **Polynomial** : +0,004 seulement, mais écart train − val doublé → plus de liberté que les données ne le justifient.
+- **Hyperparamètres** : L1 presque toujours choisie (redondance des ratios) ; `C` de la rég. log. instable (0,1 à 100) → performance insensible à la régularisation ; SVM `C` faible (0,25-0,5) → frontière lisse, cohérente avec une cible bruitée ; KNN k = 121 → lissage fort ; winsor et quantile se valent (winsor un peu plus souvent).
+- **Méthode** : grilles élargies jusqu'à ce que les valeurs retenues ne soient plus en bord de grille (SVM `C` et KNN `k` étaient en bord au premier essai).
+- **KNN** : écart train − val de 0,15 non interprétable (pondération `distance` → chaque point d'entraînement est son propre voisin).
+- **Point faible commun : rappel SG ≈ 60 %** (47 % KNN) au seuil 0,5 : bonne précision mais trop peu d'entreprises signalées (déséquilibre 65/35). → Pondération des classes et seuil de décision en partie 3.
+- **Référence à battre par les ensembles : 0,848 de ROC-AUC (SVM).**
+- Temps de calcul de la section 12 : ≈ 4 min sur 2 cœurs (comparable à Colab gratuit).
 
 ## 2. Décisions prises
 
@@ -262,11 +285,26 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Utilisé une seule fois**, à la fin de la partie 2. Toute sélection (modèles, hyperparamètres, transformations) se fait sur le train.
 - **Alternative écartée** : choisir les modèles en regardant le test → le test ne serait plus « jamais vu » (sur-apprentissage du test).
 
+### D1 bis — Groupes étendus pour le découpage ✅ (étape 9)
+- Les découpages se font par **groupe** = CIK reliés par au moins un bilan identique (686 CIK → 670 groupes), et non par CIK seul.
+- **Pourquoi** : 34 bilans identiques sont rattachés à des CIK différents ; un découpage par CIK pourrait mettre le même bilan dans le train et dans le test.
+
 ### D10 — Validation croisée imbriquée 5 × 3, mêmes plis pour tous les modèles ✅ (étape 9)
 - **Boucle interne (3 plis)** : choix des hyperparamètres, en optimisant la **ROC-AUC**. **Boucle externe (5 plis)** : estimation de la performance.
 - Plis calculés **une seule fois** et réutilisés pour tous les modèles (exigence du sujet) ; par entreprise à tous les niveaux.
 - **Pourquoi imbriquée** : utiliser la même CV pour régler et pour évaluer donnerait un score optimiste (on retiendrait la configuration qui a eu de la chance sur ces plis).
 - **Pourquoi la ROC-AUC pour régler** : indépendante du seuil, elle juge la qualité du classement par niveau de risque ; les autres métriques sont rapportées pour tous les modèles.
+
+### D11 — Pipelines : prétraitement choisi comme un hyperparamètre ✅ (étape 10)
+- Chaque modèle est un `Pipeline` (prétraitement + modèle) : toutes les transformations sont ajustées **dans chaque pli, sur l'entraînement uniquement** → pas de fuite.
+- Ratios : **winsor 1-99 % + StandardScaler** ou **QuantileTransformer**, choisi par la boucle interne (au lieu d'un choix arbitraire a priori). Catégorielles : one-hot.
+- `Winsorizer` écrit comme un transformateur scikit-learn (percentiles appris au `fit`).
+- **Alternative écartée** : transformer les données une fois pour toutes avant la CV (fuite : les percentiles verraient la validation).
+
+### D12 — Modèles de base retenus et grilles ✅ (étape 10)
+- Dummy (plancher), régression logistique L1/L2 (`C` de 0,01 à 100), version polynomiale de degré 2 sur les ratios seulement (`C` de 0,001 à 1), SVM RBF (`C`, `gamma`), KNN (`k` de 31 à 301, pondération).
+- Pas de modèle linéaire non régularisé, pas d'arbre seul (exigences du sujet).
+- SVM : score = distance à la frontière (pas de probabilité) → suffit pour ROC-AUC et PR-AUC.
 
 ### Table « bilans » pour les analyses non supervisées (étape 3)
 - Une ligne par bilan distinct, label majoritaire (ex aequo → SG, par prudence).
@@ -313,11 +351,21 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 
 **Partie 2**
 - Comment avez-vous découpé train et test ? Pourquoi 20 % ? Comment avez-vous vérifié qu'il n'y a pas de fuite ?
-- De combien le data leakage aurait-il faussé vos résultats ? (15 à 30 points ; démonstration section 11.5)
+- De combien le data leakage aurait-il faussé vos résultats ? (14 à 28 points ; démonstration section 11.5)
+- Le découpage par CIK suffit-il ? (non : 34 bilans identiques sous des CIK différents, dont des erreurs du dataset → groupes étendus)
+- 0,84 de ROC-AUC, c'est bien ? Pourquoi pas plus ? (bon niveau ; cible bruitée : 12 % de désaccord entre agences ; les agences utilisent des informations absentes des ratios)
 - Pourquoi le KNN est-il plus sensible au leakage que la Random Forest ?
 - C'est quoi une validation croisée imbriquée ? Pourquoi deux boucles ?
 - Pourquoi SG comme classe positive ?
 - Pourquoi optimiser la ROC-AUC plutôt que l'accuracy ou le F1 ?
+- C'est quoi un pipeline, et pourquoi est-ce indispensable ici ?
+- Pourquoi le prétraitement est-il traité comme un hyperparamètre ?
+- C'est quoi la régularisation ? Différence entre L1 et L2 ?
+- Pourquoi la version polynomiale n'apporte-t-elle presque rien ?
+- Comment savez-vous que vos grilles d'hyperparamètres sont assez larges ? (valeurs retenues hors des bords)
+- Les modèles sont très proches : lequel choisir, et sur quel critère ?
+- Pourquoi le rappel SG est-il si bas alors que la ROC-AUC est bonne ? (seuil 0,5 + déséquilibre)
+- Pourquoi l'écart train − validation du KNN n'est-il pas interprétable ?
 
 ---
 
@@ -331,4 +379,5 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Étape 6** — Corrélations (Spearman), information mutuelle (piège des doublons), variables catégorielles (V de Cramér, piège du SIC). Décision D5 (sélection et encodage). Zoom CIK / SIC (identifiant déguisé).
 - **Étape 7** — PCA (sens économique des axes, 8 composantes pour 90 %), t-SNE, anomalies (Isolation Forest). Décision D6 (PCA en pipeline, anomalies gardées).
 - **Étape 8** — Clustering (KMeans, GMM ; silhouette, BIC, ARI, NMI, pureté), profils des 4 clusters, conclusions de l'exploration (D1 à D6 récapitulées). Décision D7. **Partie 1 terminée.**
-- **Étape 9** — Partie 2, préparation : variables et cible (SG = 1), split train / test par entreprise, CV imbriquée 5 × 3, métriques communes, démonstration chiffrée du data leakage. Décisions D8, D9, D10.
+- **Étape 9** — Partie 2, préparation : variables et cible (SG = 1), split train / test par entreprise, CV imbriquée 5 × 3, métriques communes, démonstration chiffrée du data leakage, correction d'une fuite résiduelle (bilans identiques sous plusieurs CIK). Décisions D1 bis, D8, D9, D10.
+- **Étape 10** — Pipelines de prétraitement (winsor / quantile comme hyperparamètre), procédure de CV imbriquée commune, 5 modèles de base (Dummy, rég. log. L1/L2, polynomiale, SVM RBF, KNN), bilan. Grilles élargies après détection de valeurs en bord de grille. Décisions D11, D12.
