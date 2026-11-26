@@ -38,7 +38,7 @@
 - [x] Pas d'arbre de décision seul
 - [x] Tester des versions polynomiales des modèles linéaires
 - [ ] Si on part d'un sous-échantillon du train, réentraîner ensuite sur tout le train
-- [ ] Ensembles avancés (boosting, stacking…)
+- [x] Ensembles avancés (boosting, stacking…) — section 13
 - [ ] Tuning sur plusieurs hyperparamètres significatifs
 - [ ] Graphes en coordonnées parallèles pour le tuning
 - [ ] Recommandé : faire critiquer le travail par un LLM
@@ -210,6 +210,23 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Référence à battre par les ensembles : 0,848 de ROC-AUC (SVM).**
 - Temps de calcul de la section 12 : ≈ 4 min sur 2 cœurs (comparable à Colab gratuit).
 
+### Partie 2 — Modèles d'ensemble (étape 11, même procédure de CV imbriquée)
+
+| Modèle | ROC-AUC | PR-AUC | Rappel SG | Précision SG | Écart train − val |
+|---|---|---|---|---|---|
+| SVM (meilleur modèle de base) | 0,848 ± 0,036 | 0,780 | 59 % | 77 % | +0,05 |
+| Random Forest | 0,843 ± 0,031 | 0,764 | 64 % | 72 % | +0,15 |
+| Gradient boosting (HistGB) | 0,839 ± 0,024 | 0,764 | 64 % | 71 % | +0,14 |
+| **Stacking** (LR + SVM + RF + GB) | **0,855 ± 0,034** | **0,784** | 62 % | 75 % | +0,12 |
+
+- **Stacking = meilleur modèle à ce stade**, mais +0,007 seulement sur le SVM pour ± 0,03 de variation entre plis → **différence non significative**. Tous les bons modèles plafonnent vers **0,84-0,86**.
+- **Les ensembles d'arbres ne battent pas le SVM** : le signal (rentabilité, endettement) est assez simple pour un modèle plus simple.
+- **Arbres plus « prudents » au seuil 0,5** (rappel 64 % vs 59-60 %) : réglage du compromis rappel / précision différent, pas meilleure discrimination (ROC-AUC équivalente) → seuil en partie 3.
+- **Écart train − val des arbres (+0,12-0,15) non alarmant** : une RF mémorise par construction (ROC-AUC train 0,995) mais généralise aussi bien que les autres → courbes d'apprentissage à l'étape 12.
+- **Poids dans le stacking** : RF 0,72, SVM 0,54, rég. log. 0,31, GB 0,13. GB presque ignoré car **corrélé à 0,92 avec la RF** (mêmes erreurs) ; la rég. log. garde du poids car la **moins corrélée** aux arbres (0,77). → Le stacking valorise la **diversité des erreurs**, pas seulement la performance individuelle.
+- **Hyperparamètres** : RF `max_features` 0,10-0,15 et feuilles ≥ 5 lignes (forêt robuste au bruit) ; GB : taux d'apprentissage et nombre d'arbres varient ensemble (0,01 × 300, 0,03 × 150, 0,1 × 75 : réglages équivalents). Grilles élargies après un premier essai en bord de grille.
+- Temps : section 13 ≈ 8 min sur 2 cœurs (RF ≈ 4 min). Notebook complet ≈ 12 min.
+
 ## 2. Décisions prises
 
 *Chaque décision : constat chiffré, alternatives envisagées, raison du choix.*
@@ -306,6 +323,14 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - Pas de modèle linéaire non régularisé, pas d'arbre seul (exigences du sujet).
 - SVM : score = distance à la frontière (pas de probabilité) → suffit pour ROC-AUC et PR-AUC.
 
+### D13 — Modèles d'ensemble et précautions anti-fuite ✅ (étape 11)
+- **Random Forest** (bagging, 300 arbres ; `max_features`, `min_samples_leaf`), **gradient boosting** (`HistGradientBoostingClassifier` ; `learning_rate`, `max_iter`, `max_leaf_nodes`, `min_samples_leaf`), **stacking** (méta-modèle = régression logistique sur les scores de LR, SVM, RF, GB réglés avec leurs hyperparamètres les plus fréquents).
+- **Ratios passés bruts aux arbres** : seul l'ordre compte, la mise à l'échelle n'apporte rien.
+- **Early stopping du gradient boosting désactivé** : sa validation interne est tirée par ligne → jumeaux → arrêt trop tardif. Nombre d'arbres réglé par la CV par entreprise.
+- **Stacking réécrit (`StackingParGroupe`)** : le `StackingClassifier` de scikit-learn produit ses scores hors pli en découpant par ligne → fuite. Notre version découpe **par groupe d'entreprises**.
+- **KNN exclu du stacking** : moins bon et redondant avec les autres.
+- **Alternative écartée** : XGBoost / LightGBM (non installables dans notre environnement de travail ; `HistGradientBoosting` repose sur le même principe).
+
 ### Table « bilans » pour les analyses non supervisées (étape 3)
 - Une ligne par bilan distinct, label majoritaire (ex aequo → SG, par prudence).
 - Utilisée pour l'information mutuelle, la PCA et le clustering, que les doublons fausseraient (un bilan noté 10 fois pèserait 10 fois plus).
@@ -366,6 +391,13 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - Les modèles sont très proches : lequel choisir, et sur quel critère ?
 - Pourquoi le rappel SG est-il si bas alors que la ROC-AUC est bonne ? (seuil 0,5 + déséquilibre)
 - Pourquoi l'écart train − validation du KNN n'est-il pas interprétable ?
+- C'est quoi le bagging, le boosting, le stacking ? Quelle différence ?
+- Pourquoi la Random Forest ne fait-elle pas mieux que le SVM ?
+- Pourquoi avoir désactivé l'early stopping du gradient boosting ?
+- Pourquoi avoir réécrit le stacking au lieu d'utiliser celui de scikit-learn ?
+- Pourquoi le gradient boosting a-t-il si peu de poids dans le stacking alors qu'il est aussi bon que la RF ?
+- Votre meilleur modèle est-il vraiment meilleur que les autres ? (non significatif : +0,007 pour ± 0,03)
+- La Random Forest a une ROC-AUC d'entraînement de 0,995 : sur-apprend-elle ?
 
 ---
 
@@ -381,3 +413,4 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Étape 8** — Clustering (KMeans, GMM ; silhouette, BIC, ARI, NMI, pureté), profils des 4 clusters, conclusions de l'exploration (D1 à D6 récapitulées). Décision D7. **Partie 1 terminée.**
 - **Étape 9** — Partie 2, préparation : variables et cible (SG = 1), split train / test par entreprise, CV imbriquée 5 × 3, métriques communes, démonstration chiffrée du data leakage, correction d'une fuite résiduelle (bilans identiques sous plusieurs CIK). Décisions D1 bis, D8, D9, D10.
 - **Étape 10** — Pipelines de prétraitement (winsor / quantile comme hyperparamètre), procédure de CV imbriquée commune, 5 modèles de base (Dummy, rég. log. L1/L2, polynomiale, SVM RBF, KNN), bilan. Grilles élargies après détection de valeurs en bord de grille. Décisions D11, D12.
+- **Étape 11** — Modèles d'ensemble : Random Forest, gradient boosting, stacking par groupe d'entreprises. Stacking en tête (0,855) mais non significativement. Grilles RF et GB élargies (valeurs en bord au premier essai). Décision D13.
