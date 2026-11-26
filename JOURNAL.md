@@ -28,12 +28,12 @@
 
 ### Contraintes imposées par le sujet (à cocher au fil du projet)
 
-- [ ] Feature engineering (nouvelles variables à partir des existantes)
+- [x] Feature engineering (nouvelles variables à partir des existantes) — section 17
 - [x] Nested CV, même nombre de folds pour tous les modèles (5 × 3, mêmes plis — section 11.3)
 - [x] Learning curves — section 14.2
 - [x] Mêmes métriques pour tous les modèles, comparées sur les mêmes graphiques — section 14.1
 - [x] Évaluation finale sur un test set jamais vu (overfitting vs généralisation) — section 15
-- [ ] Sur/sous-échantillonnage **uniquement sur le train** (après le split)
+- [x] Sur/sous-échantillonnage **uniquement sur le train** (après le split) — SMOTE dans le fit, section 18.2
 - [x] Pas de modèle linéaire/polynomial non régularisé
 - [x] Pas d'arbre de décision seul
 - [x] Tester des versions polynomiales des modèles linéaires
@@ -45,6 +45,7 @@
 
 **Partie 1 (EDA et exploration non supervisée) : terminée (étapes 1 à 8).**
 **Partie 2 (modèles de base et d'ensemble) : terminée (étapes 9 à 13).**
+**Partie 3 (modèles améliorés, optimisation, analyse) : en cours (étapes 14 à 19).**
 
 ---
 
@@ -264,6 +265,60 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Où sont les erreurs** : 37 % d'erreur à ≤ 2 crans de la frontière (BBB à BB) contre 17 % plus loin ; 52 % des erreurs sur un tiers des lignes. **Asymétrie** : BB+ 55 %, BB 66 %, BB- 50 % d'erreur contre BBB- 35 % → le modèle classe IG des SG modérées (penche vers la classe majoritaire) → **seuil et pondération en partie 3**.
 - **Par agence** : Egan-Jones 17 % d'erreur mais rappel SG 50 % (SG plus proches de la frontière) ; S&P rappel 67 %. **Par secteur** : utilities 6 %, finance 13 % ; chimie 43 %, distribution 35 %, Other 34 % → variables relatives au secteur.
 
+### Partie 3 — Règle méthodologique
+- Le test a déjà été ouvert une fois (étape 13). En partie 3, **toutes les comparaisons se font en CV sur le train** (mêmes plis). Le test ne sera rouvert **qu'une fois**, à la fin, pour le modèle final amélioré, en le signalant comme un second regard.
+
+### ⚠️ Anomalie du dataset : les colonnes « cash-flow par action » (étape 14)
+- **40 % des lignes** ont un OCF par action **négatif**, dont **un tiers des lignes bénéficiaires** (87 % des lignes ont une marge nette > 0). Médiane de l'OCF par action : 0,24 $. FCF < 0 : 46 % des lignes.
+- Or l'OCF est normalement **supérieur** au bénéfice (il réintègre les amortissements) : une grande entreprise notée et bénéficiaire a presque toujours un OCF positif.
+- → Ces colonnes ne mesurent **probablement pas le niveau** du cash-flow par action (plutôt une **variation** annuelle ?). Cohérent avec leur AUC univariée de 0,53.
+- **Décision** : gardées telles quelles comme variables, mais **aucune variable construite** à partir d'elles (un ratio FCF / OCF n'aurait pas de sens). Limite du dataset à signaler.
+
+### Partie 3 — Feature engineering (étape 14)
+- **11 nouvelles variables** : 4 indicateurs (fonds propres négatifs, perte, ROE négatif, marge brute = 100 %), 1 ratio construit (écart marge brute − marge opérationnelle), 6 **centiles sectoriels** (ROA, marge nette, LT Debt / Capital, Current Ratio, EBITDA Margin, Asset Turnover ; distribution sectorielle apprise **sur le pli d'entraînement**), + variante **réduite** (sans EBIT Margin ni ROI).
+- **Pouvoir univarié** : indicateurs très ciblés (90 % de SG si fonds propres négatifs, 78 % si perte) mais **rares** (3-13 % des lignes) → AUC 0,54-0,62. Marge brute 100 % : AUC 0,50 (inutile). Centiles sectoriels de rentabilité / endettement : |AUC − 0,5| ≈ 0,21-0,23, **comme les ratios bruts**.
+- **Ablation** (hyperparamètres fixes, mêmes plis ; écarts toujours < 0,011) :
+
+| Modèle | A (partie 2) | B + indicateurs | C + ratio construit | D + centiles sectoriels | E réduite |
+|---|---|---|---|---|---|
+| Rég. log. | 0,829 | 0,829 | 0,829 | **0,833** | 0,829 |
+| SVM | 0,850 | 0,851 | 0,848 | 0,848 | 0,847 |
+| RF | 0,843 | 0,843 | 0,838 | 0,842 | 0,842 |
+| GB | 0,847 | 0,847 | 0,844 | 0,841 | 0,836 |
+
+- **CV imbriquée avec la variante D** : rég. log. **0,825 → 0,832 (+0,007, 5 plis sur 5**, +0,012 PR-AUC, +1,4 pt de rappel) ; SVM +0,001 (3/5), RF −0,001 (1/5), GB +0,003 (3/5) → **bruit**.
+- **Pourquoi c'est logique** : un indicateur n'est qu'un **seuil** et un centile sectoriel une **interaction** ratio × secteur ; arbres et SVM à noyau les construisent **eux-mêmes**. Seul le modèle linéaire, qui ne peut ni créer de seuil ni combiner, en profite.
+- **Conclusion** : les modèles non linéaires extraient déjà l'essentiel de l'information des 16 ratios. Pour progresser nettement, il faudrait des **informations nouvelles** (historique, taille, marché), absentes du dataset. **Résultat négatif mais instructif**, à présenter comme tel.
+- Temps : section 17 ≈ 11 min (CV imbriquée des 4 modèles enrichis ≈ 10 min). Notebook complet ≈ 31 min.
+
+### Partie 3 — Déséquilibre des classes et seuil de décision (étape 15)
+- **Rééquilibrage pendant l'entraînement** (mêmes hyperparamètres, mêmes plis, seuil 0,5) :
+
+| Modèle | Rappel SG sans → pondération / SMOTE | Précision SG sans → pondération | ROC-AUC |
+|---|---|---|---|
+| Rég. log. + FE | 60 % → 73 % / 72 % | 75 % → 66 % | 0,833 inchangée |
+| SVM | 62 % → 74 % / 74 % | 77 % → 68 % | 0,850 inchangée |
+| GB | 63 % → 72 % / 70 % | 73 % → 65 % | 0,847 → 0,842 |
+
+- → **Rééquilibrer ≈ déplacer le seuil** : +10 à +13 pts de rappel, −9 pts de précision, ROC-AUC inchangée. **Pondération ≈ SMOTE** (SMOTE fabrique souvent des points proches de jumelles) → pondération préférable (plus simple, pas de données artificielles).
+- **SMOTE implémenté à la main** (`SMOTESimple`, imbalanced-learn non installable ici), appliqué **dans le fit uniquement** → jamais sur validation / test (exigence du sujet).
+- **Seuil choisi selon le coût des erreurs** (hypothèse : SG ratée = 3 × fausse alerte), **en CV imbriquée** (seuil choisi sur les scores hors pli internes, appliqué au pli externe), sur le **stacking final** (rég. log. + FE, SVM, RF, GB) :
+
+| | Seuil 0,5 | Seuil optimisé (coût 3:1) |
+|---|---|---|
+| Seuil | 0,50 | **0,21** (0,16-0,24 selon le pli) |
+| Rappel SG | 62 % | **86 %** |
+| Précision SG | 74 % | 59 % |
+| F1 SG | ≈ 0,68 | 0,70 |
+| Balanced accuracy | ≈ 0,75 | 0,77 |
+| Coût moyen | 0,47 | **0,35 (−24 %)** |
+| ROC-AUC / PR-AUC | 0,856 / 0,789 | inchangées |
+
+- Seuil **stable** d'un pli à l'autre ; proche du seuil théorique 1/(1+3) = 0,25 → scores bien calibrés.
+- **Sensibilité au ratio de coût** (scores hors pli regroupés) : ratio 1 → seuil 0,43, 68 % détectées, 33 % signalées ; ratio 2 → 0,29, 78 %, 42 % ; **ratio 3 → 0,20, 85 %, 51 %** ; ratio 5 → 0,16, 90 %, 60 %. Gains qui ralentissent au-delà de 3.
+- **Usage recommandé** : seuil **0,20** → l'outil signale ~la moitié des entreprises, qui contient **85 % des SG**. Une SG ratée sur sept.
+- Temps : section 18 ≈ 2 min. Notebook complet ≈ 32 min.
+
 ## 2. Décisions prises
 
 *Chaque décision : constat chiffré, alternatives envisagées, raison du choix.*
@@ -379,6 +434,19 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Pas de changement de modèle** après le test, même si deux modèles y font légèrement mieux : sinon le test devient un jeu de validation.
 - **Incertitude du test** quantifiée par **bootstrap par entreprise** (1 000 tirages) plutôt que par ligne (lignes non indépendantes).
 
+### D16 — Nouvelles variables uniquement pour la régression logistique ✅ (étape 14)
+- Variante retenue : **D** (indicateurs + écart de marges + centiles sectoriels), **pour la régression logistique seulement** (gain régulier 5/5).
+- SVM, RF, GB : variables de la partie 2 (aucun gain, calculs plus longs, modèles moins lisibles).
+- Dans le stacking final : rég. log. **avec** les nouvelles variables, autres modèles **sans**.
+- **Alternatives écartées** : imposer les nouvelles variables à tous les modèles (aucun gain) ; version réduite (dégrade le GB de −0,011) ; variables construites à partir des cash-flows (colonnes douteuses).
+- Pour le notebook « ce qui n'a pas marché » : indicateur marge brute = 100 %, écart de marges, version réduite, nouvelles variables pour les modèles non linéaires.
+
+### D17 — Seuil de décision choisi selon le coût des erreurs ✅ (étape 15)
+- **Hypothèse de coût : SG ratée = 3 × fausse alerte** (investisseur : une perte en capital coûte plus qu'une analyse de trop). Ratio **paramétrable** : sensibilité étudiée de 1 à 5.
+- **Seuil retenu : ≈ 0,20**, choisi en CV imbriquée (jamais sur les données évaluées).
+- **Pondération des classes préférée à SMOTE** (résultats équivalents, plus simple) ; mais le seuil explicite est le levier principal, car rééquilibrer revient à déplacer le seuil.
+- **Alternatives écartées** : seuil 0,5 (suppose des erreurs de même coût) ; choisir le seuil sur les données d'évaluation (fuite) ; SMOTE avant le split (fuite, interdit par le sujet).
+
 ### Table « bilans » pour les analyses non supervisées (étape 3)
 - Une ligne par bilan distinct, label majoritaire (ex aequo → SG, par prudence).
 - Utilisée pour l'information mutuelle, la PCA et le clustering, que les doublons fausseraient (un bilan noté 10 fois pèserait 10 fois plus).
@@ -459,6 +527,22 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - Où votre modèle se trompe-t-il ? (frontière BBB-/BB+, asymétrie vers IG, certains secteurs)
 - Votre modèle sur-apprend-il ? (comparaison train / CV / test ; les modèles contraints généralisent mieux)
 
+**Partie 3**
+- Quelles variables avez-vous créées, et pourquoi chacune ?
+- Pourquoi vos nouvelles variables n'améliorent-elles pas les arbres ? (seuils et interactions déjà construits par les arbres)
+- Pourquoi la régression logistique en profite-t-elle ? (ne peut ni créer de seuil ni combiner avec le secteur)
+- Comment calculez-vous les centiles sectoriels sans fuite ? (distribution apprise sur le pli d'entraînement, dans le pipeline)
+- Que vous a appris l'étude par ajout successif (ablation) ?
+- Les colonnes de cash-flow sont-elles fiables ? (non : 40 % d'OCF négatifs, dont des entreprises bénéficiaires)
+- Comment pourrait-on dépasser 0,85 ? (informations nouvelles : historique, taille, données de marché)
+- C'est quoi le seuil de décision ? Pourquoi pas 0,5 ?
+- Pourquoi un coût de 3:1 ? (hypothèse métier, sensibilité étudiée de 1 à 5)
+- Comment avez-vous choisi le seuil sans fuite ? (CV imbriquée : seuil choisi sur les plis internes)
+- Pondération ou SMOTE ? (équivalents ; rééquilibrer ≈ déplacer le seuil ; pondération plus simple)
+- Pourquoi la ROC-AUC ne change-t-elle pas quand on rééquilibre ? (le classement reste le même)
+- Comment avez-vous évité que SMOTE crée une fuite ? (appliqué dans le fit, donc sur le train uniquement)
+- Combien d'entreprises risquées votre outil détecte-t-il ? (86 % au seuil 0,21, avec 59 % de précision)
+
 ---
 
 ## 4. Historique
@@ -476,3 +560,5 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Étape 11** — Modèles d'ensemble : Random Forest, gradient boosting, stacking par groupe d'entreprises. Stacking en tête (0,855) mais non significativement. Grilles RF et GB élargies (valeurs en bord au premier essai). Décision D13.
 - **Étape 12** — Comparaison des 8 modèles (6 métriques, mêmes graphiques, courbes ROC / PR, comparaison appariée), courbes d'apprentissage, pipelines A vs B (effet de l'agence). **Correction** de la méthode de réglage des modèles de base du stacking. Décision D14.
 - **Étape 13** — Évaluation finale sur le test (ouvert une seule fois) : stacking 0,820 (IC 95 % [0,758 ; 0,874]), comparaison train / CV / test pour tous les modèles, bootstrap par entreprise, matrice de confusion, analyse des erreurs (frontière, asymétrie, agences, secteurs). Conclusions de la partie 2. Décision D15. **Partie 2 terminée.**
+- **Étape 14** — Partie 3, feature engineering : 11 nouvelles variables, ablation sur 4 modèles × 5 variantes, CV imbriquée des modèles enrichis. Résultat : gain uniquement pour la régression logistique (+0,007). Anomalie des colonnes de cash-flow documentée. Décision D16.
+- **Étape 15** — Déséquilibre et seuil : pondération vs SMOTE (implémenté à la main, train uniquement), seuil optimisé selon un coût 3:1 en CV imbriquée sur le stacking final → **rappel SG 62 % → 86 %**, coût −24 %. Sensibilité au ratio de coût. Décision D17.
