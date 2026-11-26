@@ -30,14 +30,14 @@
 
 - [ ] Feature engineering (nouvelles variables à partir des existantes)
 - [x] Nested CV, même nombre de folds pour tous les modèles (5 × 3, mêmes plis — section 11.3)
-- [ ] Learning curves
-- [ ] Mêmes métriques pour tous les modèles, comparées sur les mêmes graphiques
+- [x] Learning curves — section 14.2
+- [x] Mêmes métriques pour tous les modèles, comparées sur les mêmes graphiques — section 14.1
 - [ ] Évaluation finale sur un test set jamais vu (overfitting vs généralisation)
 - [ ] Sur/sous-échantillonnage **uniquement sur le train** (après le split)
 - [x] Pas de modèle linéaire/polynomial non régularisé
 - [x] Pas d'arbre de décision seul
 - [x] Tester des versions polynomiales des modèles linéaires
-- [ ] Si on part d'un sous-échantillon du train, réentraîner ensuite sur tout le train
+- [x] Si on part d'un sous-échantillon du train, réentraîner ensuite sur tout le train — courbes d'apprentissage jusqu'à 100 %, modèles finaux sur tout le train
 - [x] Ensembles avancés (boosting, stacking…) — section 13
 - [ ] Tuning sur plusieurs hyperparamètres significatifs
 - [ ] Graphes en coordonnées parallèles pour le tuning
@@ -217,15 +217,32 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 | SVM (meilleur modèle de base) | 0,848 ± 0,036 | 0,780 | 59 % | 77 % | +0,05 |
 | Random Forest | 0,843 ± 0,031 | 0,764 | 64 % | 72 % | +0,15 |
 | Gradient boosting (HistGB) | 0,839 ± 0,024 | 0,764 | 64 % | 71 % | +0,14 |
-| **Stacking** (LR + SVM + RF + GB) | **0,855 ± 0,034** | **0,784** | 62 % | 75 % | +0,12 |
+| **Stacking** (LR + SVM + RF + GB) | **0,855 ± 0,032** | **0,789** | 62 % | 75 % | +0,12 |
 
 - **Stacking = meilleur modèle à ce stade**, mais +0,007 seulement sur le SVM pour ± 0,03 de variation entre plis → **différence non significative**. Tous les bons modèles plafonnent vers **0,84-0,86**.
 - **Les ensembles d'arbres ne battent pas le SVM** : le signal (rentabilité, endettement) est assez simple pour un modèle plus simple.
 - **Arbres plus « prudents » au seuil 0,5** (rappel 64 % vs 59-60 %) : réglage du compromis rappel / précision différent, pas meilleure discrimination (ROC-AUC équivalente) → seuil en partie 3.
 - **Écart train − val des arbres (+0,12-0,15) non alarmant** : une RF mémorise par construction (ROC-AUC train 0,995) mais généralise aussi bien que les autres → courbes d'apprentissage à l'étape 12.
-- **Poids dans le stacking** : RF 0,72, SVM 0,54, rég. log. 0,31, GB 0,13. GB presque ignoré car **corrélé à 0,92 avec la RF** (mêmes erreurs) ; la rég. log. garde du poids car la **moins corrélée** aux arbres (0,77). → Le stacking valorise la **diversité des erreurs**, pas seulement la performance individuelle.
+- **Poids dans le stacking** (version corrigée, étape 12) : RF 0,54, SVM 0,52, rég. log. 0,39, GB 0,24. GB le moins pondéré car **corrélé à 0,92 avec la RF** (mêmes erreurs) ; la rég. log. garde du poids car la **moins corrélée** aux arbres (0,77). → Le stacking valorise la **diversité des erreurs**, pas seulement la performance individuelle.
+- **Réglages finaux des modèles de base** (grille sur tout le train, CV par entreprise) : LR L1 `C` = 0,1 (winsor) ; SVM `C` = 0,25, `gamma` = scale (quantile) ; RF `max_features` = 0,1 ; GB 0,03 × 150 arbres, 8 feuilles, ≥ 80 lignes par feuille.
 - **Hyperparamètres** : RF `max_features` 0,10-0,15 et feuilles ≥ 5 lignes (forêt robuste au bruit) ; GB : taux d'apprentissage et nombre d'arbres varient ensemble (0,01 × 300, 0,03 × 150, 0,1 × 75 : réglages équivalents). Grilles élargies après un premier essai en bord de grille.
-- Temps : section 13 ≈ 8 min sur 2 cœurs (RF ≈ 4 min). Notebook complet ≈ 12 min.
+- Temps : section 13 ≈ 10 min sur 2 cœurs (RF ≈ 4 min, réglage final ≈ 3 min).
+
+### ⚠️ Erreur corrigée à l'étape 12 — réglages des modèles de base du stacking (→ notebook « ce qui n'a pas marché »)
+- **Première version** : pour chaque hyperparamètre, on prenait la valeur **la plus fréquente** sur les 5 plis. Pour le gradient boosting, ça donnait `learning_rate = 0,01` avec `max_iter = 150`, une combinaison **qu'aucun pli n'avait choisie** (0,01 n'était retenu qu'avec 300 arbres) → boosting **sous-entraîné** (ROC-AUC 0,829 sur la courbe d'apprentissage au lieu de 0,848) et poids faussé dans le stacking (0,13).
+- **Détection** : incohérence entre la courbe d'apprentissage du GB (0,829) et sa CV imbriquée (0,839).
+- **Correction** : (1) pour **évaluer** le stacking, chaque modèle de base reprend sur chaque pli externe les réglages choisis par **sa** boucle interne sur ce pli ; (2) pour le **modèle final**, réglages choisis par grille sur tout le train (CV par entreprise).
+- **Leçon** : des hyperparamètres qui vont **par paires** (taux d'apprentissage × nombre d'arbres) ne se choisissent pas séparément.
+
+### Partie 2 — Comparaison, courbes d'apprentissage, effet de l'agence (étape 12)
+- **Comparaison appariée** (mêmes plis) : le stacking bat RF, GB, rég. log. et KNN sur **5 plis sur 5** (+0,01 à +0,03) et le SVM sur **4 sur 5** (+0,007 en moyenne, entre −0,002 et +0,013). Avantage **petit mais régulier**.
+- **Métriques à seuil** : différences surtout dues à la position du seuil 0,5 (arbres : rappel 64 % ; KNN : 47 % mais précision 80 %). F1 ≈ 0,67-0,68 et balanced accuracy ≈ 0,75 pour tous les bons modèles.
+- **Courbes ROC / précision-rappel** (scores hors pli) : courbes quasi superposées ; stacking légèrement au-dessus partout.
+- **Courbes d'apprentissage** : validation **quasi plate** (gain de 0,001 à 0,005 de 55 % à 100 % du train) → **plus de données n'aiderait pas** ; les modèles plafonnent à cause des **variables**. Rég. log. : écart train − val 0,03 (limitée par sa forme linéaire). RF : écart 0,16 mais validation au niveau du SVM (pas de sur-apprentissage préjudiciable). GB : progresse au début puis plafonne (0,848).
+- **Effet de l'agence (pipeline A vs B, CV imbriquée)** : +0,003 à +0,010 de ROC-AUC, +0,7 à +2 points de rappel SG ; SVM meilleur avec l'agence sur 5 plis sur 5, rég. log. et GB sur 3 sur 5. **Gain réel mais petit** : le biais d'agence ne joue que près de la frontière BBB- / BB+.
+- **Le modèle a appris le biais de chaque agence** : mêmes 6 250 bilans notés « comme si » par une seule agence → **25,6 % classés SG (Egan-Jones), 28,1 % (Fitch), 31,3 % (S&P), 33,4 % (Moody's)**. Même ordre que l'exploration (section 5.2). Près de 8 points d'écart entre EJ et Moody's → l'outil doit fixer une **agence de référence** (S&P par défaut).
+- **Modèle retenu pour le test** : **stacking** (modèle principal), avec le **SVM** comme référence plus simple.
+- Temps : notebook complet ≈ 19 min sur 2 cœurs.
 
 ## 2. Décisions prises
 
@@ -331,6 +348,12 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **KNN exclu du stacking** : moins bon et redondant avec les autres.
 - **Alternative écartée** : XGBoost / LightGBM (non installables dans notre environnement de travail ; `HistGradientBoosting` repose sur le même principe).
 
+### D14 — Choix du modèle final et de la méthode de réglage ✅ (étape 12)
+- **Modèle principal : stacking** (meilleur sur toutes les métriques sans seuil, devant les autres sur 4-5 plis sur 5). **Référence : SVM** (0,007 derrière, bien plus simple).
+- **Réglage du modèle final** : recherche par grille sur tout le train (CV par entreprise) ; l'évaluation par CV imbriquée reste celle de référence.
+- **Agence gardée (D2 confirmée)** : petit gain de performance, et le modèle apprend le biais de chaque agence au lieu de le confondre avec le risque.
+- **Partie 3** : les gains viendront des variables (courbes d'apprentissage plates) et du seuil / déséquilibre (rappel SG ≈ 62 %).
+
 ### Table « bilans » pour les analyses non supervisées (étape 3)
 - Une ligne par bilan distinct, label majoritaire (ex aequo → SG, par prudence).
 - Utilisée pour l'information mutuelle, la PCA et le clustering, que les doublons fausseraient (un bilan noté 10 fois pèserait 10 fois plus).
@@ -398,6 +421,12 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - Pourquoi le gradient boosting a-t-il si peu de poids dans le stacking alors qu'il est aussi bon que la RF ?
 - Votre meilleur modèle est-il vraiment meilleur que les autres ? (non significatif : +0,007 pour ± 0,03)
 - La Random Forest a une ROC-AUC d'entraînement de 0,995 : sur-apprend-elle ?
+- Comment avez-vous comparé les modèles entre eux ? (mêmes plis → comparaison pli par pli)
+- Le stacking est-il vraiment meilleur que le SVM ? (4 plis sur 5, +0,007 : régulier mais faible)
+- Que montrent vos courbes d'apprentissage ? Faudrait-il plus de données ? (non : plateau → variables)
+- Que vous apporte l'agence ? (+0,01 de ROC-AUC, et le modèle retrouve seul l'ordre de générosité des agences)
+- Pourquoi ne pas avoir pris les hyperparamètres « les plus fréquents » pour le stacking ? (paires d'hyperparamètres : erreur détectée et corrigée)
+- Quel modèle retenez-vous et pourquoi ?
 
 ---
 
@@ -414,3 +443,4 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Étape 9** — Partie 2, préparation : variables et cible (SG = 1), split train / test par entreprise, CV imbriquée 5 × 3, métriques communes, démonstration chiffrée du data leakage, correction d'une fuite résiduelle (bilans identiques sous plusieurs CIK). Décisions D1 bis, D8, D9, D10.
 - **Étape 10** — Pipelines de prétraitement (winsor / quantile comme hyperparamètre), procédure de CV imbriquée commune, 5 modèles de base (Dummy, rég. log. L1/L2, polynomiale, SVM RBF, KNN), bilan. Grilles élargies après détection de valeurs en bord de grille. Décisions D11, D12.
 - **Étape 11** — Modèles d'ensemble : Random Forest, gradient boosting, stacking par groupe d'entreprises. Stacking en tête (0,855) mais non significativement. Grilles RF et GB élargies (valeurs en bord au premier essai). Décision D13.
+- **Étape 12** — Comparaison des 8 modèles (6 métriques, mêmes graphiques, courbes ROC / PR, comparaison appariée), courbes d'apprentissage, pipelines A vs B (effet de l'agence). **Correction** de la méthode de réglage des modèles de base du stacking. Décision D14.
