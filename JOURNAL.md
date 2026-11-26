@@ -32,7 +32,7 @@
 - [x] Nested CV, même nombre de folds pour tous les modèles (5 × 3, mêmes plis — section 11.3)
 - [x] Learning curves — section 14.2
 - [x] Mêmes métriques pour tous les modèles, comparées sur les mêmes graphiques — section 14.1
-- [ ] Évaluation finale sur un test set jamais vu (overfitting vs généralisation)
+- [x] Évaluation finale sur un test set jamais vu (overfitting vs généralisation) — section 15
 - [ ] Sur/sous-échantillonnage **uniquement sur le train** (après le split)
 - [x] Pas de modèle linéaire/polynomial non régularisé
 - [x] Pas d'arbre de décision seul
@@ -44,7 +44,7 @@
 - [ ] Recommandé : faire critiquer le travail par un LLM
 
 **Partie 1 (EDA et exploration non supervisée) : terminée (étapes 1 à 8).**
-**Partie 2 (modèles de base et d'ensemble) : en cours (étapes 9 à 13).**
+**Partie 2 (modèles de base et d'ensemble) : terminée (étapes 9 à 13).**
 
 ---
 
@@ -244,6 +244,26 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Modèle retenu pour le test** : **stacking** (modèle principal), avec le **SVM** comme référence plus simple.
 - Temps : notebook complet ≈ 19 min sur 2 cœurs.
 
+### Partie 2 — Évaluation finale sur le test (étape 13, test ouvert une seule fois)
+
+| Modèle | ROC-AUC entraînement | ROC-AUC CV | **ROC-AUC test** | PR-AUC test | Rappel SG test | Précision SG test |
+|---|---|---|---|---|---|---|
+| **Stacking (retenu)** | 0,990 | 0,855 | **0,820** | 0,713 | 61 % | 67 % |
+| SVM (référence) | 0,921 | 0,848 | 0,811 | 0,699 | 58 % | 66 % |
+| Gradient boosting | 0,929 | 0,839 | 0,828 | 0,737 | 61 % | 70 % |
+| Rég. log. polynomiale | 0,893 | 0,829 | 0,826 | 0,713 | 53 % | 70 % |
+| Random Forest | 1,000 | 0,843 | 0,803 | 0,694 | 67 % | 61 % |
+| Régression logistique | 0,854 | 0,825 | 0,796 | 0,652 | 60 % | 60 % |
+| KNN | 1,000 | 0,831 | 0,783 | 0,624 | 41 % | 62 % |
+
+- **Performance réelle du modèle retenu : 0,820** (IC 95 % bootstrap par entreprise : **[0,758 ; 0,874]**, l'estimation de CV 0,855 est dedans). 326 SG détectées sur 538 (61 %) ; 162 fausses alertes sur 1 017 IG (16 %).
+- **Tous les modèles baissent un peu** (−0,003 à −0,047), y compris la rég. log. → test un peu plus difficile pour tous (variabilité d'échantillon avec 126 entreprises), pas de fuite ni de sur-apprentissage de la sélection.
+- **Sur-apprentissage vs généralisation** : les modèles qui mémorisent (RF, KNN : train = 1,000) perdent le plus (−0,04 / −0,05) ; les plus contraints (polynomial `C` = 0,01, GB 8 feuilles / 80 lignes) le moins (−0,003 / −0,011).
+- **GB et polynomial légèrement devant le stacking sur le test** → on ne change **pas** de modèle (choix fait avant le test ; écarts < 0,01 ≪ incertitude ± 0,06).
+- **Stacking vs SVM** : meilleur dans 80 % des tirages bootstrap, mais l'IC de l'écart [−0,013 ; +0,030] contient 0.
+- **Où sont les erreurs** : 37 % d'erreur à ≤ 2 crans de la frontière (BBB à BB) contre 17 % plus loin ; 52 % des erreurs sur un tiers des lignes. **Asymétrie** : BB+ 55 %, BB 66 %, BB- 50 % d'erreur contre BBB- 35 % → le modèle classe IG des SG modérées (penche vers la classe majoritaire) → **seuil et pondération en partie 3**.
+- **Par agence** : Egan-Jones 17 % d'erreur mais rappel SG 50 % (SG plus proches de la frontière) ; S&P rappel 67 %. **Par secteur** : utilities 6 %, finance 13 % ; chimie 43 %, distribution 35 %, Other 34 % → variables relatives au secteur.
+
 ## 2. Décisions prises
 
 *Chaque décision : constat chiffré, alternatives envisagées, raison du choix.*
@@ -354,6 +374,11 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Agence gardée (D2 confirmée)** : petit gain de performance, et le modèle apprend le biais de chaque agence au lieu de le confondre avec le risque.
 - **Partie 3** : les gains viendront des variables (courbes d'apprentissage plates) et du seuil / déséquilibre (rappel SG ≈ 62 %).
 
+### D15 — Évaluation finale : une seule ouverture du test, pas de re-sélection ✅ (étape 13)
+- Modèles finaux entraînés sur **tout le train** avec leurs réglages finaux (grille sur le train, CV par entreprise), puis appliqués **une fois** au test.
+- **Pas de changement de modèle** après le test, même si deux modèles y font légèrement mieux : sinon le test devient un jeu de validation.
+- **Incertitude du test** quantifiée par **bootstrap par entreprise** (1 000 tirages) plutôt que par ligne (lignes non indépendantes).
+
 ### Table « bilans » pour les analyses non supervisées (étape 3)
 - Une ligne par bilan distinct, label majoritaire (ex aequo → SG, par prudence).
 - Utilisée pour l'information mutuelle, la PCA et le clustering, que les doublons fausseraient (un bilan noté 10 fois pèserait 10 fois plus).
@@ -427,6 +452,12 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - Que vous apporte l'agence ? (+0,01 de ROC-AUC, et le modèle retrouve seul l'ordre de générosité des agences)
 - Pourquoi ne pas avoir pris les hyperparamètres « les plus fréquents » pour le stacking ? (paires d'hyperparamètres : erreur détectée et corrigée)
 - Quel modèle retenez-vous et pourquoi ?
+- Quelle est la performance réelle de votre modèle ? (0,82 sur le test, IC 95 % [0,76 ; 0,87])
+- Pourquoi le score de test est-il plus bas que la validation croisée ? (variabilité : 126 entreprises ; baisse générale à tous les modèles ; IC contient l'estimation de CV)
+- Le gradient boosting fait mieux que le stacking sur le test : pourquoi ne pas le choisir ? (choix fait avant le test)
+- C'est quoi un bootstrap ? Pourquoi par entreprise ?
+- Où votre modèle se trompe-t-il ? (frontière BBB-/BB+, asymétrie vers IG, certains secteurs)
+- Votre modèle sur-apprend-il ? (comparaison train / CV / test ; les modèles contraints généralisent mieux)
 
 ---
 
@@ -444,3 +475,4 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Étape 10** — Pipelines de prétraitement (winsor / quantile comme hyperparamètre), procédure de CV imbriquée commune, 5 modèles de base (Dummy, rég. log. L1/L2, polynomiale, SVM RBF, KNN), bilan. Grilles élargies après détection de valeurs en bord de grille. Décisions D11, D12.
 - **Étape 11** — Modèles d'ensemble : Random Forest, gradient boosting, stacking par groupe d'entreprises. Stacking en tête (0,855) mais non significativement. Grilles RF et GB élargies (valeurs en bord au premier essai). Décision D13.
 - **Étape 12** — Comparaison des 8 modèles (6 métriques, mêmes graphiques, courbes ROC / PR, comparaison appariée), courbes d'apprentissage, pipelines A vs B (effet de l'agence). **Correction** de la méthode de réglage des modèles de base du stacking. Décision D14.
+- **Étape 13** — Évaluation finale sur le test (ouvert une seule fois) : stacking 0,820 (IC 95 % [0,758 ; 0,874]), comparaison train / CV / test pour tous les modèles, bootstrap par entreprise, matrice de confusion, analyse des erreurs (frontière, asymétrie, agences, secteurs). Conclusions de la partie 2. Décision D15. **Partie 2 terminée.**

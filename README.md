@@ -49,7 +49,7 @@ git clone https://github.com/samiguessoum/hedgehogs-credit-risk-ml
 | Partie | Contenu | Statut |
 |---|---|---|
 | 1 | Analyse exploratoire et exploration non supervisée | ✅ Terminée |
-| 2 | Modèles de base et modèles d'ensemble | ⏳ À venir |
+| 2 | Modèles de base et modèles d'ensemble | ✅ Terminée |
 | 3 | Modèles améliorés, optimisation des hyperparamètres et analyse | ⏳ À venir |
 
 ## Principaux enseignements de l'exploration
@@ -59,5 +59,14 @@ git clone https://github.com/samiguessoum/hedgehogs-credit-risk-ml
 - **La rentabilité est le premier facteur de risque**, suivie de l'endettement.
 - **Les valeurs extrêmes sont informatives** (plus souvent des entreprises risquées) : elles sont gardées et traitées dans le pipeline.
 - **Les clusters capturent des modèles économiques plus que le risque** : un même ratio n'a pas le même sens selon l'activité.
+
+## Principaux résultats de la modélisation (partie 2)
+
+- **Data leakage chiffré** : un découpage aléatoire des lignes aurait surestimé les performances de 14 à 28 points. Tous les découpages se font par groupe d'entreprises.
+- **8 modèles** comparés en validation croisée imbriquée (5 × 3, mêmes plis, mêmes 6 métriques) : tous les bons modèles plafonnent entre 0,84 et 0,86 de ROC-AUC ; le **stacking** est régulièrement devant.
+- **Performance réelle sur des entreprises jamais vues** : **ROC-AUC de 0,82** (intervalle de confiance à 95 % : 0,76-0,87), 61 % des entreprises Speculative Grade détectées.
+- **Limites** : les courbes d'apprentissage montrent que ce sont les variables, et non la quantité de données, qui limitent la performance ; les erreurs se concentrent autour de la frontière BBB- / BB+.
+
+**Temps d'exécution du notebook complet** : environ 20 minutes sur Colab (2 cœurs).
 
 Le détail de chaque choix et de ses alternatives est dans [`JOURNAL.md`](JOURNAL.md).
