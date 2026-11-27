@@ -39,8 +39,8 @@
 - [x] Tester des versions polynomiales des modèles linéaires
 - [x] Si on part d'un sous-échantillon du train, réentraîner ensuite sur tout le train — courbes d'apprentissage jusqu'à 100 %, modèles finaux sur tout le train
 - [x] Ensembles avancés (boosting, stacking…) — section 13
-- [ ] Tuning sur plusieurs hyperparamètres significatifs
-- [ ] Graphes en coordonnées parallèles pour le tuning
+- [x] Tuning sur plusieurs hyperparamètres significatifs (étape 16 : 6 pour le GB, intervalles continus)
+- [x] Graphes en coordonnées parallèles pour le tuning (étape 16, section 19)
 - [ ] Recommandé : faire critiquer le travail par un LLM
 
 **Partie 1 (EDA et exploration non supervisée) : terminée (étapes 1 à 8).**
@@ -447,6 +447,20 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Pondération des classes préférée à SMOTE** (résultats équivalents, plus simple) ; mais le seuil explicite est le levier principal, car rééquilibrer revient à déplacer le seuil.
 - **Alternatives écartées** : seuil 0,5 (suppose des erreurs de même coût) ; choisir le seuil sur les données d'évaluation (fuite) ; SMOTE avant le split (fuite, interdit par le sujet).
 
+### D18 — Recherche aléatoire sur intervalles pour le gradient boosting ✅ (étape 16)
+- **Méthode** : `RandomizedSearchCV`, lois log-uniformes pour les hyperparamètres qui agissent par ordre de grandeur (Bergstra et Bengio, 2012). Exploration (100 tirages GB, 60 SVM) pour comprendre, puis **CV imbriquée** (40 et 30 tirages par pli) pour l'estimation honnête.
+- **GB : +0,009 de ROC-AUC** (0,839 → 0,848, 4 plis sur 5). Hyperparamètres qui comptent : `learning_rate` (optimum 0,012 à 0,023, forme en cloche) et `min_samples_leaf` (petites feuilles meilleures, ρ = −0,41). `max_iter` se compense avec le pas ; `l2_regularization` sans effet ; `max_features` faible (0,2 à 0,4) prometteur.
+- **SVM : aucun gain** (0,848 → 0,845) : `gamma="scale"` était déjà dans la bonne zone (0,009 à 0,05).
+- **Malédiction du gagnant observée** : en exploration le SVM semblait battre la grille (0,851), en CV imbriquée non. Justifie de ne comparer qu'en CV imbriquée.
+- **Décision** : GB réglé par recherche aléatoire dans le modèle final ; SVM garde la grille.
+- **Alternatives écartées** : grille plus fine (coût exponentiel avec 6 hyperparamètres) ; optimisation bayésienne (Optuna, non disponible et gain marginal attendu vu la convergence en ~20 tirages).
+
+### D19 — Explicabilité par méthodes agnostiques, raisonnement par famille ✅ (étape 17)
+- **Méthodes** : importance par permutation **en CV** (jamais sur le test), variable par variable **et par famille** (même permutation pour toutes les colonnes d'une famille) ; dépendance partielle + ICE (stacking entraîné sur tout le train, usage descriptif) ; effet agence / secteur par substitution ; explications locales par **neutralisation** des familles (valeur de référence = médiane du train).
+- **Résultats** : endettement (8,3 points de ROC-AUC) et marges (7,0) dominent pour les 4 modèles ; puis rentabilité, liquidité, secteur, agence ; cash-flows et efficacité ≈ 0. Effets dans le sens attendu, seuil de rentabilité autour de 0, compensation dette / rentabilité. À ratios égaux : agence ±8 points (Egan-Jones 0,30 → Moody's 0,39), secteur ±16 points (utilities 0,30 → télécoms 0,46).
+- **Point de méthode** : la permutation individuelle sous-estime les variables redondantes (Operating Margin ≈ 0 car ≈ EBIT Margin ; dette : 4,9 en individuel contre 8,3 en famille).
+- **Alternatives écartées** : `feature_importances_` des arbres (calculée sur le train, biaisée) ; coefficients (illisibles pour un stacking) ; SHAP / KernelSHAP (très coûteux sur un stacking de 4 modèles, bibliothèque non disponible partout) ; permutation sur le test (évitée : le test reste réservé au regard final).
+
 ### Table « bilans » pour les analyses non supervisées (étape 3)
 - Une ligne par bilan distinct, label majoritaire (ex aequo → SG, par prudence).
 - Utilisée pour l'information mutuelle, la PCA et le clustering, que les doublons fausseraient (un bilan noté 10 fois pèserait 10 fois plus).
@@ -542,6 +556,17 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - Pourquoi la ROC-AUC ne change-t-elle pas quand on rééquilibre ? (le classement reste le même)
 - Comment avez-vous évité que SMOTE crée une fuite ? (appliqué dans le fit, donc sur le train uniquement)
 - Combien d'entreprises risquées votre outil détecte-t-il ? (86 % au seuil 0,21, avec 59 % de précision)
+- Pourquoi une recherche aléatoire plutôt qu'une grille ? (peu d'hyperparamètres comptent ; à budget égal, plus de valeurs distinctes testées par hyperparamètre)
+- Pourquoi une loi log-uniforme ? (hyperparamètres qui agissent par ordre de grandeur)
+- Comment lire vos graphes en coordonnées parallèles ?
+- Le meilleur score de l'exploration n'est-il pas optimiste ? (si : malédiction du gagnant, d'où la CV imbriquée ; exemple du SVM)
+- Pourquoi les hyperparamètres choisis changent-ils d'un pli à l'autre ? (compensation pas × nombre d'arbres : performances équivalentes)
+- Pourquoi l'importance par permutation plutôt que feature_importances_ ? (calculée sur des données non vues, mesure la dépendance de la performance)
+- Operating Margin a une importance nulle : faut-il la supprimer ? (non : redondante avec EBIT Margin, ρ = 0,999 ; l'importance mesure l'apport EN PLUS des autres)
+- Pourquoi l'endettement passe-t-il devant la rentabilité alors que la rentabilité discriminait mieux seule ? (rentabilité répartie sur 10 ratios corrélés ; dette = information complémentaire)
+- Pourquoi l'EBITDA Margin augmente-t-elle le risque ? (à marge nette fixée : amortissements et intérêts lourds)
+- Le modèle utilise l'agence : est-ce gênant ? (effet de 8 points à ratios égaux, cohérent avec la sévérité des agences ; ajustement, pas raccourci)
+- Pourquoi le modèle a-t-il raté GameStop ? (aucune dette, rentable : la note reflète un risque d'activité absent des ratios)
 
 ---
 
@@ -562,3 +587,5 @@ Mesuré sur les **1 231 bilans notés par au moins deux agences** :
 - **Étape 13** — Évaluation finale sur le test (ouvert une seule fois) : stacking 0,820 (IC 95 % [0,758 ; 0,874]), comparaison train / CV / test pour tous les modèles, bootstrap par entreprise, matrice de confusion, analyse des erreurs (frontière, asymétrie, agences, secteurs). Conclusions de la partie 2. Décision D15. **Partie 2 terminée.**
 - **Étape 14** — Partie 3, feature engineering : 11 nouvelles variables, ablation sur 4 modèles × 5 variantes, CV imbriquée des modèles enrichis. Résultat : gain uniquement pour la régression logistique (+0,007). Anomalie des colonnes de cash-flow documentée. Décision D16.
 - **Étape 15** — Déséquilibre et seuil : pondération vs SMOTE (implémenté à la main, train uniquement), seuil optimisé selon un coût 3:1 en CV imbriquée sur le stacking final → **rappel SG 62 % → 86 %**, coût −24 %. Sensibilité au ratio de coût. Décision D17.
+- **Étape 16** — Optimisation des hyperparamètres : recherche aléatoire sur intervalles (GB : 6 hyperparamètres, 100 tirages ; SVM : 60 tirages), graphes en coordonnées parallèles, effet de chaque hyperparamètre (Spearman), convergence, CV imbriquée. GB +0,009, SVM sans gain, malédiction du gagnant observée. Décision D18.
+- **Étape 17** — Explicabilité : importance par permutation en CV (variables et familles, 4 modèles), PDP / ICE des 6 ratios les plus importants, carte rentabilité × endettement, effet de l'agence et du secteur à ratios égaux, explications locales de 3 entreprises (SG détectée, SG ratée, fausse alerte). Décision D19.
